@@ -1,0 +1,272 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+//
+// iKuai Q3000 (爱快 Q3000)
+//   SoC   : MT7981B (Filogic 820)
+//   RAM   : 512MB DDR3
+//   Flash : 128MB SPI-NAND (NMBM)
+//   Switch: MT7531 (4 port)
+//   Boot  : MTK U-Boot 2025.07.1 (bl-mt798x-dhcpd / uboot-mtk-20250711)
+//
+// 移植基线: tfnhui/immortalwrt-mt798x-25.12 @ build-20260923-130 (7d0c19f)
+// 来源    : DTS 取自 hanwckf/immortalwrt-mt798x (files-5.4)，并按运行中固件
+//           的实时设备树 (/sys/firmware/fdt) 反编译核对后适配 6.12 内核写法。
+//
+// 分区布局与 U-Boot 的 mtdparts 严格一致，二者不可分别改动:
+//   nmbm0:1024k(bl2),512k(u-boot-env),2048k(Factory),2048k(fip),113152k(ubi)
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/leds/common.h>
+
+#include "mt7981b.dtsi"
+
+/ {
+	model = "iKuai Q3000";
+	compatible = "ikuai,q3000", "mediatek,mt7981";
+
+	mediatek,env-size = "0x20000";
+	mediatek,env-offset = "0x0";
+	mediatek,env-part = "u-boot-env";
+
+	aliases {
+		serial0 = &uart0;
+		label-mac-device = &gmac0;
+		led-boot = &led_status_red;
+		led-failsafe = &led_status_red;
+		led-running = &led_status_green;
+		led-upgrade = &led_status_blue;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+		bootargs-append = " panic=10 ignore_loglevel";
+	};
+
+	memory@40000000 {
+		device_type = "memory";
+		reg = <0 0x40000000 0 0x20000000>;
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		button-reset {
+			label = "reset";
+			linux,code = <KEY_RESTART>;
+			gpios = <&pio 1 GPIO_ACTIVE_LOW>;
+		};
+
+		button-wps {
+			label = "wps";
+			linux,code = <KEY_WPS_BUTTON>;
+			gpios = <&pio 0 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		led_status_green: green {
+			function = LED_FUNCTION_STATUS;
+			color = <LED_COLOR_ID_GREEN>;
+			gpios = <&pio 11 GPIO_ACTIVE_HIGH>;
+		};
+
+		led_status_red: red {
+			function = LED_FUNCTION_STATUS;
+			color = <LED_COLOR_ID_RED>;
+			gpios = <&pio 10 GPIO_ACTIVE_HIGH>;
+		};
+
+		led_status_blue: blue {
+			function = LED_FUNCTION_STATUS;
+			color = <LED_COLOR_ID_BLUE>;
+			gpios = <&pio 12 GPIO_ACTIVE_HIGH>;
+		};
+	};
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&watchdog {
+	status = "okay";
+};
+
+&eth {
+	status = "okay";
+
+	gmac0: mac@0 {
+		compatible = "mediatek,eth-mac";
+		reg = <0>;
+		phy-mode = "2500base-x";
+		nvmem-cell-names = "mac-address";
+		nvmem-cells = <&macaddr_factory_10048 1>;
+
+		fixed-link {
+			speed = <2500>;
+			full-duplex;
+			pause;
+		};
+	};
+};
+
+&mdio_bus {
+	switch: switch@1f {
+		compatible = "mediatek,mt7531";
+		reg = <31>;
+		reset-gpios = <&pio 39 GPIO_ACTIVE_HIGH>;
+		interrupt-controller;
+		#interrupt-cells = <1>;
+		interrupt-parent = <&pio>;
+		interrupts = <38 IRQ_TYPE_LEVEL_HIGH>;
+	};
+};
+
+&switch {
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+			label = "lan1";
+		};
+
+		port@1 {
+			reg = <1>;
+			label = "lan2";
+		};
+
+		port@2 {
+			reg = <2>;
+			label = "lan3";
+		};
+
+		port@3 {
+			reg = <3>;
+			label = "wan";
+			nvmem-cell-names = "mac-address";
+			nvmem-cells = <&macaddr_factory_10048 0>;
+		};
+
+		port@6 {
+			reg = <6>;
+			ethernet = <&gmac0>;
+			phy-mode = "2500base-x";
+
+			fixed-link {
+				speed = <2500>;
+				full-duplex;
+				pause;
+			};
+		};
+	};
+};
+
+&hnat {
+	mtketh-wan = "wan";
+	mtketh-lan = "lan";
+	mtketh-max-gmac = <2>;
+	mtketh-ppe-num = <2>;
+	ext-devices-prefix = "wwan", "usb", "eth";
+	status = "okay";
+};
+
+&spi0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi0_flash_pins>;
+	status = "okay";
+
+	spi_nand: spi_nand@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+
+		spi-max-frequency = <52000000>;
+		spi-tx-bus-width = <4>;
+		spi-rx-bus-width = <4>;
+
+		mediatek,nmbm;
+		mediatek,bmt-max-ratio = <1>;
+		mediatek,bmt-max-reserved-blocks = <64>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "bl2";
+				reg = <0x00000 0x0100000>;
+				read-only;
+			};
+
+			partition@100000 {
+				label = "u-boot-env";
+				reg = <0x0100000 0x0080000>;
+			};
+
+			factory: partition@180000 {
+				label = "Factory";
+				reg = <0x180000 0x0200000>;
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					macaddr_factory_10048: macaddr@10048 {
+						compatible = "mac-base";
+						reg = <0x10048 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+				};
+			};
+
+			partition@380000 {
+				label = "fip";
+				reg = <0x380000 0x0200000>;
+				read-only;
+			};
+
+			ubi: partition@580000 {
+				label = "ubi";
+				reg = <0x580000 0x6e80000>;
+				compatible = "linux,ubi";
+			};
+		};
+	};
+};
+
+&pio {
+	spi0_flash_pins: spi0-pins {
+		mux {
+			function = "spi";
+			groups = "spi0", "spi0_wp_hold";
+		};
+
+		conf-pu {
+			pins = "SPI0_CS", "SPI0_HOLD", "SPI0_WP";
+			drive-strength = <8>;
+			bias-pull-up = <0x67>;
+		};
+
+		conf-pd {
+			pins = "SPI0_CLK", "SPI0_MOSI", "SPI0_MISO";
+			drive-strength = <8>;
+			bias-pull-down = <0x67>;
+		};
+	};
+};
+
+&wifi {
+	status = "okay";
+	pinctrl-names = "dbdc";
+	pinctrl-0 = <&wifi_dbdc_pins>;
+	mediatek,mtd-eeprom = <&factory 0x0>;
+};

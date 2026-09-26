@@ -1,0 +1,146 @@
+name: Build ImmortalWrt 25.12 for iKuai Q3000
+
+# 触发：手动（可指定基座 tag）/ 推送到 main 时自动
+on:
+  workflow_dispatch:
+    inputs:
+      base_tag:
+        description: '基座 tag（tfnhui/immortalwrt-mt798x-25.12）'
+        required: true
+        default: 'build-20260923-130'
+      jobs:
+        description: '并行编译任务数'
+        required: true
+        default: '4'
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+
+    steps:
+      - name: 释放磁盘空间
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL \
+                      /usr/local/lib/node_modules /usr/share/swift || true
+          sudo apt-get clean
+          df -h /
+
+      - name: 检出本仓库（移植文件）
+        uses: actions/checkout@v4
+        with:
+          path: port
+
+      - name: 记录日期
+        id: date
+        run: echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+
+      - name: 拉取基座源码树（tfnhui tag）
+        run: |
+          BASE_TAG="${{ github.event.inputs.base_tag || 'build-20260923-130' }}"
+          echo "== 基座 tag: $BASE_TAG"
+          git clone --depth=1 --branch "$BASE_TAG" \
+            https://github.com/tfnhui/immortalwrt-mt798x-25.12.git openwrt
+          cd openwrt
+          git log -1 --format='== 基座 commit: %H  (%ad)' --date=iso
+          echo "== 源码树大小:"; du -sh .
+
+      - name: 注入 Q3000 移植
+        run: sh port/apply.sh openwrt
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ccache ecj fastjar file g++ gawk \
+            gettext git java-propose-classpath libelf-dev libncurses5-dev \
+            libncursesw5-dev libssl-dev python3 python3-distutils python3-setuptools \
+            rsync subversion swig time xsltproc zlib1g-dev unzip wget
+
+      - name: 更新并安装 feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 应用配置并校验
+        run: |
+          cd openwrt
+          cp ../port/defconfig/ikuai-q3000.config .config
+          make defconfig
+
+          echo "===== 目标选择 ====="
+          grep -E '^CONFIG_TARGET_(BOARD|SUBTARGET|PROFILE)=' .config
+          echo -n "  设备选中 ikuai_q3000 : "
+          grep -c '^CONFIG_TARGET_mediatek_filogic_DEVICE_ikuai_q3000=y$' .config
+
+          echo "===== 插件校验 ====="
+          for p in luci-app-mtwifi-cfg luci-app-turboacc-mtk luci-app-eqos-mtk \
+                   luci-app-openclash luci-app-adguardhome luci-app-sqm \
+                   luci-app-upnp luci-app-ddns luci-app-ttyd luci-theme-argon; do
+            printf '  %-30s %s\n' "$p" "$(grep -c "^CONFIG_PACKAGE_${p}=y$" .config)"
+          done
+
+          echo "===== 设备是否进入镜像列表 ====="
+          grep -c 'ikuai_q3000' tmp/.config-target.in || true
+
+      - name: 下载源码包
+        run: cd openwrt && make download -j8 || make download -j1 V=s
+
+      - name: 编译固件
+        run: |
+          cd openwrt
+          JOBS="${{ github.event.inputs.jobs || '4' }}"
+          echo "== 并行任务数: $JOBS"
+          make -j"$JOBS" || make -j1 V=s
+
+      - name: 整理产物
+        run: |
+          cd openwrt/bin/targets/mediatek/filogic
+          rm -rf packages
+          echo "===== 产物清单 ====="
+          ls -lh
+          echo "===== SHA256 ====="
+          sha256sum *.bin *.itb 2>/dev/null | tee /tmp/sums.txt || true
+
+      - name: 上传 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-25.12-ikuai-q3000-${{ steps.date.outputs.date }}-${{ github.run_number }}
+          path: openwrt/bin/targets/mediatek/filogic/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "iKuai Q3000 固件 ${{ steps.date.outputs.date }} #${{ github.run_number }}"
+          tag_name: "q3000-${{ steps.date.outputs.date }}-${{ github.run_number }}"
+          body: |
+            ## iKuai Q3000 固件（ImmortalWrt 25.12）
+
+            | 项 | 值 |
+            |---|---|
+            | 设备 | iKuai Q3000 (MT7981B / 512MB DDR3 / 128MB SPI-NAND) |
+            | 版本 | ImmortalWrt 25.12-SNAPSHOT（内核 6.12） |
+            | 基座 | `tfnhui/immortalwrt-mt798x-25.12` @ `${{ github.event.inputs.base_tag || 'build-20260923-130' }}` |
+            | 引导 | MTK U-Boot（bl-mt798x-dhcpd / uboot-mtk-20250711） |
+            | 分区 | `bl2 + u-boot-env + Factory + fip + ubi(113152k)` |
+
+            ### 刷写
+            - 已在 OpenWrt 上：用 `*sysupgrade.bin`
+            - 从 U-Boot 刷：用 `*factory.bin`（或 `*squashfs-factory.bin`）
+
+            ### 设备树来源
+            由运行中的 Q3000 活设备树（`/sys/firmware/fdt`）反编译还原，非猜测。
+          files: |
+            openwrt/bin/targets/mediatek/filogic/*.bin
+            openwrt/bin/targets/mediatek/filogic/*.itb
+            openwrt/bin/targets/mediatek/filogic/sha256sums
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
