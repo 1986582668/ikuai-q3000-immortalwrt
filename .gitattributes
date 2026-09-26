@@ -1,0 +1,9 @@
+# 编译/脚本类文件一律 LF，禁止任何行尾转换
+* -text
+*.sh text eol=lf
+*.dts text eol=lf
+*.dtsi text eol=lf
+*.mk text eol=lf
+*.config text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
