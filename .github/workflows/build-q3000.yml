@@ -131,6 +131,12 @@ jobs:
             | 基座 | `tfnhui/immortalwrt-mt798x-25.12` @ `${{ github.event.inputs.base_tag || 'build-20260923-130' }}` |
             | 引导 | MTK U-Boot（bl-mt798x-dhcpd / uboot-mtk-20250711） |
             | 分区 | `bl2 + u-boot-env + Factory + fip + ubi(113152k)` |
+            | 包集 | 与设备 `/etc/apk/world` 一比一（379 包 + 4 引导固件），无代理工具链 |
+
+            > 本版配置已按设备实际 `/etc/apk/world` 复刻：移除 `sing-box` /
+            > `xray-core` / `v2ray-plugin` 等约 100MB 代理工具链与 btrfs/exfat
+            > 文件系统工具，补回 `ddnsto` / `htop` / `openssh-sftp-server` 等在用包。
+            > rootfs 约 32MB，overlay 可写空间约 61MiB。
 
             ### 刷写
             - 已在 OpenWrt 上：用 `*sysupgrade.bin`

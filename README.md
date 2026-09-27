@@ -40,8 +40,31 @@ target/linux/mediatek/
   ├── dts-ext/mt7981b-ikuai-q3000.dts          设备树
   ├── image/filogic-ext.mk                     设备注册（已含 Device/ikuai_q3000）
   └── filogic/base-files/etc/board.d/02_network  板级网络（lan1-3 + wan）
-defconfig/ikuai-q3000.config         编译配置（9379 行 / 421 个包）
+defconfig/ikuai-q3000.config         编译配置（9386 行 / 397 个包）
 ```
+
+### 配置口径（2026-09-27 起）
+
+`defconfig/ikuai-q3000.config` 以**设备 `/etc/apk/world`（379 条）为唯一基准**一比一复刻，
+即「编译出来的固件里有哪些包」= 「当前这台路由器里有哪些包」。
+
+- 关掉 63 个设备上并不存在的包，其中 92% 的体积来自一整套代理工具链
+  （`sing-box` 40.9MB / `xray-core` 29.6MB / `v2ray-plugin` 15.9MB /
+  `shadowsocks-rust` 12.2MB / `geoview` 7.0MB / `haproxy` 3.8MB），
+  另有 btrfs/exfat/ntfs3 全套文件系统工具、coreutils、parted、smartmontools 等。
+- 补回 38 个设备实际在用、但原配置漏写的包
+  （`htop` / `nano` / `openssh-sftp-server` / `bind-host` / `ddnsto` /
+  `watchcat` / `sqm-scripts` / `etherwake` / `iptables-nft` 等）。
+- 同时删掉其他 SoC 的引导固件（`trusted-firmware-a-mt7986/7987/7988-*`），
+  只保留本机型的 `mt7981` bl2 ×2 + fip。
+- 回归校验：多启用 0、漏掉 0；启用总数 397 = 379(world) + 4(引导固件) + 14(构建变体)。
+
+效果：rootfs 65.14MB → 约 32.34MB，sysupgrade 约 36.8MB，overlay 可写空间
+约 27MiB 恢复至约 61MiB。
+
+> 注意：`luci-app-openclash` 已在 world 中，故仍保留；被移除的是它的**底层代理内核**
+> （`sing-box` / `xray-core` 等）。如需科学上网，刷机后从软件源单独安装即可，
+> 不必让每个固件都背上 100MB。
 
 ## 编译
 
